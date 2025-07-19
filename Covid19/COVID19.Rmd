@@ -1,0 +1,292 @@
+---
+title: "COVID19"
+author: "J. Achalapong"
+date: "2025-07-19"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Step1: Import Data
+
+This section initiates the project by importing the necessary packages and reading in four datasets from the Johns Hopkins University CSSE COVID-19 GitHub repository. The datasets include global and US COVID-19 confirmed cases and deaths. The data is loaded into R using read_csv() for further processing.  
+
+
+```{r get_jhu_data}
+library(tidyverse)
+library(lubridate)
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_confirmed_US.csv",
+                "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(url_in,file_names)
+urls
+```
+
+Let's read in the data and see what we have.
+```{r import_data, message=FALSE}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+us_cases <- read_csv(urls[3])
+us_deaths <- read_csv(urls[4])
+```
+
+## Step2: Tidy and Transform Data
+
+The raw datasets are in a wide format with date columns spread across. To prepare for analysis, the data is reshaped into a long format using `pivot_longer()`. Columns such as latitude and longitude are removed, and death and case data are joined together. `Dates` are parsed into Date objects. For US data, the same transformations are applied, and a `Combined_Key` is used to merge data with a population lookup table to facilitate normalization of case and death counts.  
+
+
+```{r tidy_global_data}
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c(`Province/State`,
+                         `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat,Long))
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c(`Province/State`,
+                         `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat,Long))
+
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(date = mdy(date))
+
+summary(global)
+
+global <- global %>% filter(cases > 0)
+```
+
+```{r tidy_us_data}
+us_cases <- us_cases %>%
+  pivot_longer(cols = -c(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+us_deaths <- us_deaths %>%
+  pivot_longer(cols = -c(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+us <- us_cases %>%
+  full_join(us_deaths)
+
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>% select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, Population,
+         Combined_Key)
+
+global
+```
+## Step3: Visualizing Data
+
+This section uses `ggplot2` to plot the number of cases and deaths over time in the United States, both at the national and state levels (e.g., New York). Logarithmic scaling is applied to the y-axis to handle the wide range of case and death counts. The graphs help reveal trends and highlight spikes in the pandemic timeline.  
+
+
+``` {r visualizing_data}
+us_by_state <- us %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(death_per_mill = deaths *1000000 / Population) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, death_per_mill, Population) %>%
+  ungroup()
+
+us_total <- us_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(death_per_mill = deaths *1000000 / Population) %>%
+  select(Country_Region, date,
+         cases, deaths, death_per_mill, Population) %>%
+  ungroup()
+
+us_total %>%
+  filter(cases > 0 ) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(colour = "cases")) +
+  geom_point(aes(colour = "cases")) +
+  geom_line(aes(y = deaths, colour = "deaths")) +
+  geom_point(aes(y = deaths, colour = "deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+
+state <- "New York"
+us_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0 ) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(colour = "cases")) +
+  geom_point(aes(colour = "cases")) +
+  geom_line(aes(y = deaths, colour = "deaths")) +
+  geom_point(aes(y = deaths, colour = "deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+
+state <- "Colorado"
+us_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0 ) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(colour = "cases")) +
+  geom_point(aes(colour = "cases")) +
+  geom_line(aes(y = deaths, colour = "deaths")) +
+  geom_point(aes(y = deaths, colour = "deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+## Step4: Analyzing Data
+New daily case and death counts are computed using the `lag()` function. These derived variables (`new_cases`, `new_deaths`) are plotted to visualize the progression and waves of the pandemic. Warnings indicate missing or infinite values due to log-scaling and differences involving zeros.  
+
+
+``` {r analyzing_data}
+us_by_state <- us_by_state %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+us_total <- us_total %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+us_total %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(colour = "new_cases")) +
+  geom_point(aes(colour = "new_cases")) +
+  geom_line(aes(y = new_deaths, colour = "new_deaths")) +
+  geom_point(aes(y = new_deaths, colour = "new_deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+
+state <- "New York"
+us_by_state %>%
+  filter(Province_State == state) %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(colour = "new_cases")) +
+  geom_point(aes(colour = "new_cases")) +
+  geom_line(aes(y = new_deaths, colour = "new_deaths")) +
+  geom_point(aes(y = new_deaths, colour = "new_deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+
+state <- "Colorado"
+us_by_state %>%
+  filter(Province_State == state) %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(colour = "new_cases")) +
+  geom_point(aes(colour = "new_cases")) +
+  geom_line(aes(y = new_deaths, colour = "new_deaths")) +
+  geom_point(aes(y = new_deaths, colour = "new_deaths")) +
+  scale_y_log10()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+
+us_state_totals <- us_by_state %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(deaths), cases = max(cases),
+            Population = max(Population),
+            cases_per_thou = 1000* cases / Population,
+            deaths_per_thou = 1000* deaths / Population) %>%
+  filter(cases > 0, Population > 0)
+
+us_state_totals %>%
+  slice_min(deaths_per_thou, n=10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+
+us_state_totals %>%
+  slice_max(deaths_per_thou, n=10) %>%
+  select(deaths_per_thou, cases_per_thou, everything())
+```
+
+## Step5: Modeling Data
+
+A simple linear regression is conducted to model the relationship between cases per thousand (`cases_per_thou`) and deaths per thousand (`deaths_per_thou`) using `lm()`. The model shows a statistically significant positive relationship, suggesting that states with more cases per capita tend to have more deaths per capita. The model’s predictions are visualized alongside the actual data points.  
+
+
+```{r modeling_data}
+mod <- lm(deaths_per_thou ~ cases_per_thou, data = us_state_totals)
+summary(mod)
+
+us_state_totals %>% slice_min(cases_per_thou)
+us_state_totals %>% slice_max(cases_per_thou)
+
+x_grid <- seq(1,451)
+new_df <- tibble(cases_per_thou = x_grid)
+us_state_totals %>% mutate(pred = predict(mod))
+
+us_tot_w_pred <- us_state_totals %>% mutate(pred = predict(mod))
+us_tot_w_pred %>% ggplot() +
+  geom_point(aes(x = cases_per_thou, y = deaths_per_thou), color = "blue") +
+  geom_point(aes(x = cases_per_thou, y = pred), color = "red")
+```
+
+
+
+## Step 6: Report Conclusion and Sources of Bias
+
+This analysis provides a high-level view of the COVID-19 pandemic in the United States and globally, offering insights into trends, state-wise impacts, and the relationship between infection and mortality rates.  
+
+### Key conclusions  
+
+ - The progression of cases and deaths followed a pattern of waves.  
+ - Some states experienced much higher case and death rates per capita.  
+ - There is a significant linear relationship between case incidence and death incidence.  
+
+### Potential sources of bias and limitations  
+
+ - Underreporting or inconsistent testing: COVID-19 case counts depend heavily on testing availability and public health reporting systems.  
+
+ - Population data limitations: Mismatches between case/death data and population data could introduce bias in per-capita calculations.  
+
+ - Data lag and reporting delays: These affect the accuracy of daily case and death counts, especially visible in the spikes and drops.  
+
+ - Policy differences: Differences in public health measures, reporting standards, and healthcare infrastructure across states may confound the observed relationships.  
+
+ - Simplistic modeling: The linear regression used does not account for other influential factors such as age demographics, vaccination rates, or comorbidities.  
+ 

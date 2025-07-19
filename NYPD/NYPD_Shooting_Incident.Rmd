@@ -1,0 +1,343 @@
+---
+title: "NYPD Shooting Report"
+author: "J. Achalapong"
+date: "2025-06-01"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Introduction
+
+
+### Project Purpose
+
+This project is an assignment for the course DTSA 5301: Data Science as a Field. We are demonstrating our ability to complete all steps in the data science process by producing a report on the NYPD Shooting Incident data.
+
+
+### Question of Interest
+
+How can data from past shooting incidents help us decide where and when to deploy police resources most effectively to reduce gun violence in New York City?
+
+
+
+
+## Project Step 1: Describe and Import the Dataset
+
+
+### Data Description
+
+List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. This data can be used by the public to explore the nature of shooting/criminal activity. Please refer to [NYPD Shooting Incident Data (Historic) - CKAN](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic) for additional information about this dataset. 
+
+
+### Row Description
+
+- Each row in this dataset is a shooting incident.
+
+
+### Column Description
+
+- INCIDENT_KEY: Randomly generated persistent ID for each arrest
+- OCCUR_DATE: Exact date of shooting incident
+- OCCUR_TIME: Exact time of the shooting incident
+- BORO: Borough where the shooting incident occurred
+- STATISTICAL_MURDER_FLAG: Shooting resulted in the victim's death which would be counted as a murder
+- PERP_AGE_GROUP: Perpetrator's age within a category
+- PERP_SEX: Perpetrator's sex description
+- PERP_RACE: Perpetrator's race description
+- VIC_AGE_GROUP: Victim's age within a category
+- VIC_SEX: Victim's sex description
+- VIC_RACE: Victim's race description
+
+
+### Import Libraries
+
+```{r library, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+
+### Import Dataset
+
+```{r import_data, message=FALSE, warnings=FALSE}
+nypd_shooting_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd_shooting <- read.csv(nypd_shooting_url)
+glimpse(nypd_shooting)
+```
+
+
+
+
+## Step 2: Tidy and Transform Data
+
+
+### Remove Unnecessary Columns
+
+The following columns are not needed for this assignment:  
+PRECINCT, JURISDICTION_CODE, LOCATION_DESC, X_COORD_CD, Y_COORD_CD, Lon_Lat
+
+```{r remove_columns, message=FALSE, warning=FALSE}
+nypd_shooting <- nypd_shooting %>% 
+  select(-c(PRECINCT, JURISDICTION_CODE, LOCATION_DESC, X_COORD_CD, Y_COORD_CD, Lon_Lat)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         Shootings = 1,
+         OCCUR_YEAR = year(OCCUR_DATE),
+         OCCUR_MONTH = month(OCCUR_DATE, label = TRUE, abbr = TRUE),
+         OCCUR_WDAY = weekdays(OCCUR_DATE),
+         OCCUR_HOUR = hour(hms(OCCUR_TIME)))
+```
+
+
+### Replace missing and Remove extreme values in data
+
+```{r replace_missing}
+nypd_shooting = nypd_shooting %>% 
+  replace_na(list(PERP_AGE_GROUP = "Unknown", PERP_SEX = "Unknown", PERP_RACE = "Unknown"))
+
+nypd_shooting = subset(nypd_shooting, 
+                       PERP_AGE_GROUP!="224" 
+                       & PERP_AGE_GROUP!="940" 
+                       & PERP_AGE_GROUP!="1020" 
+                       & PERP_AGE_GROUP!="1028" 
+                       & PERP_AGE_GROUP!="2021")
+```
+
+
+### Convert Data Types 
+
+```{r convert_factors}
+nypd_shooting$PERP_AGE_GROUP = recode(nypd_shooting$PERP_AGE_GROUP, UNKNOWN = "Unknown")
+nypd_shooting$PERP_SEX = recode(nypd_shooting$PERP_SEX, U = "Unknown")
+nypd_shooting$PERP_RACE = recode(nypd_shooting$PERP_RACE, UNKNOWN = "Unknown")
+nypd_shooting$VIC_SEX   = recode(nypd_shooting$VIC_SEX, U = "Unknown")
+nypd_shooting$VIC_RACE   = recode(nypd_shooting$VIC_RACE, UNKNOWN = "Unknown")
+nypd_shooting$INCIDENT_KEY = as.character(nypd_shooting$INCIDENT_KEY)
+nypd_shooting$BORO = as.factor(nypd_shooting$BORO)
+nypd_shooting$PERP_AGE_GROUP = as.factor(nypd_shooting$PERP_AGE_GROUP)
+nypd_shooting$PERP_SEX = as.factor(nypd_shooting$PERP_SEX)
+nypd_shooting$PERP_RACE = as.factor(nypd_shooting$PERP_RACE)
+nypd_shooting$VIC_AGE_GROUP = as.factor(nypd_shooting$VIC_AGE_GROUP)
+nypd_shooting$VIC_SEX = as.factor(nypd_shooting$VIC_SEX)
+nypd_shooting$VIC_RACE = as.factor(nypd_shooting$VIC_RACE)
+nypd_shooting$STATISTICAL_MURDER_FLAG <- as.factor(nypd_shooting$STATISTICAL_MURDER_FLAG)
+```
+
+
+### Summary of Data (Descriptive Statistics)
+
+```{r shooting_summary}
+# Descriptive statistics.
+summary(nypd_shooting)
+```
+
+
+### Missing Data
+
+```{r check_missing}
+# Identify columns with missing data and display the number of missing values per column.
+colSums(is.na(nypd_shooting))
+
+# Total number of missing values.
+sum(is.na(nypd_shooting))
+
+# Percentage of missing values.
+mean(is.na(nypd_shooting))
+```
+
+
+
+
+
+## Step 3: Add Visualizations and Analysis
+
+
+**Research Question**
+
+1. Which part of New York has the highest number of incidents? How many of those were murder cases?
+ - Brooklyn recorded the highest number of shooting incidents, followed by the Bronx and Queens. The pattern is similar when looking specifically at murder cases, with Brooklyn again leading, followed by the Bronx and Queens in the same order.
+
+```{r incidents_by_borought}
+boro_counts <- nypd_shooting %>%
+  count(BORO) %>%
+  mutate(BORO = fct_reorder(BORO, n, .desc = TRUE))
+
+ggplot(boro_counts, aes(x = BORO, y = n, fill = BORO)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5, size = 4) + # Add count labels
+  labs(title = "Shooting Incidents by Borough of New York City",
+       subtitle = "(2006 - 2024)",
+       x = "NYC Boroughs",
+       y = "Total Number of Incidents",
+       caption = "(Figure - 1)") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r murder_by_borought}
+boro_murders <- nypd_shooting %>%
+  filter(STATISTICAL_MURDER_FLAG == "true") %>%
+  count(BORO) %>%
+  mutate(BORO = fct_reorder(BORO, n, .desc = TRUE))
+
+ggplot(boro_murders, aes(x = BORO, y = n, fill = BORO)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5, size = 4) + # Add count labels
+  labs(title = "Murder Cases by Borough of New York City",
+       subtitle = "(2006 - 2024)",
+       x = "NYC Boroughs",
+       y = "Total Number of Murder Cases",
+       caption = "(Figure - 2)") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+2. When should people in New York be most cautious about becoming victims of crime?
+
+ - **Summer months**—particularly **June**, **July**, and **August**—see the highest number of incidents.
+
+ - **Weekends** tend to have more criminal activity, so extra caution is advised.
+
+ - **Evenings and nighttime** are the riskiest hours. Unless it’s necessary, staying indoors during these times is strongly recommended.
+```{r}
+incident_by_month <- nypd_shooting %>%
+  group_by(OCCUR_MONTH) %>%
+  count()
+
+incident_by_wday <- nypd_shooting %>%
+  group_by(OCCUR_WDAY) %>%
+  count()
+
+incident_by_hour <- nypd_shooting %>%
+  group_by(OCCUR_HOUR) %>%
+  count()
+```
+
+```{r}
+g <- ggplot(incident_by_month, aes(x = OCCUR_MONTH, y = n)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5, size = 4) +
+  labs(title = "Which month should people in New York be cautious of incidents?",
+       x = "Incident Occurence Month",
+       y = "Total Number of Incidents",
+       caption = "(Figure - 3)") +
+  theme_minimal()
+g
+```
+```{r}
+g <- ggplot(incident_by_wday, aes(x = OCCUR_WDAY, y = n)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5, size = 4) +
+  labs(title = "Which day should people in New York be cautious of incidents?",
+       x = "Incident Occurence Day",
+       y = "Total Number of Incidents",
+       caption = "(Figure - 4)") +
+  theme_minimal()
+g
+```
+```{r}
+g <- ggplot(incident_by_hour, aes(x = OCCUR_HOUR, y = n)) +
+  geom_line() +
+  labs(title = "Which time should people in New York be cautious of incidents?",
+       x = "Incident Occurence Hour",
+       y = "Total Number of Incidents",
+       caption = "(Figure - 5)") +
+  theme_minimal()
+g
+```
+
+
+
+3. The Profile of Perpetrators and Victims
+
+ - A significant number of incidents involve individuals aged **18–24** and **25–44**, making these the most affected age groups.
+
+ - **Black** and **White Hispanic** individuals appear most frequently in incident records across New York City boroughs.
+
+ - The vast majority of incidents involve **male** individuals—far more than female—highlighting a clear gender disparity.
+
+```{r}
+table(nypd_shooting$PERP_AGE_GROUP, nypd_shooting$VIC_AGE_GROUP)
+```
+```{r}
+table(nypd_shooting$PERP_SEX, nypd_shooting$VIC_SEX)
+```
+```{r}
+table(nypd_shooting$PERP_RACE, nypd_shooting$VIC_RACE)
+```
+
+
+
+4. Building a Logistic Regression Model to Predict Whether an Incident Is a Murder Case
+
+Logistic regression is a classification technique used to predict a categorical outcome based on input variables. In this case, I use logistic regression to estimate the probability that a shooting incident results in a murder, based on factors such as the **demographic profile** of those involved, the **location** of the incident, and the **date and time** it occurred.
+
+
+```{r}
+# Logistics Regression 
+glm_model <- glm(STATISTICAL_MURDER_FLAG ~ PERP_RACE + PERP_SEX + PERP_AGE_GROUP + VIC_RACE + VIC_SEX + VIC_AGE_GROUP + OCCUR_HOUR + OCCUR_WDAY + OCCUR_MONTH + Latitude + Longitude + BORO, data = nypd_shooting, family = binomial)
+summary(glm_model)
+```
+
+
+
+
+## Step 4: Report Conclusion and Sources of Bias
+
+### Conclusion
+
+I aimed to explore whether certain factors—such as the victim’s demographics (age, sex, race), the perpetrator’s background, or the location of the incident—could help predict whether a shooting would be fatal. Using logistic regression, I found that the __victim’s age group__ and the __perpetrator’s race__ were statistically significant predictors of whether the victim survived. These results suggest that both individual characteristics and contextual factors play a role in the outcome of shooting incidents.
+
+### Sources of Bias
+
+When analyzing this topic, it's important to acknowledge the possibility of unconscious bias and stereotypes, particularly when we rely on assumptions formed by media exposure rather than personal experience. As someone who has never lived in New York City, my perceptions have been largely shaped by news reports, movies, and social media. For example, I initially assumed that the Bronx would have the highest number of incidents, simply because it is often portrayed negatively in the media. I also believed that women might be more likely to be victims of such incidents.
+
+However, when looking at the actual data, I was surprised to find that Brooklyn ranks highest in terms of total incidents, followed by the Bronx and Queens. This trend is also reflected in murder cases. Interestingly, the data shows that men are involved in significantly more incidents than women.
+
+This highlights the importance of validating our assumptions with data. Relying solely on impressions or second-hand information can lead to flawed conclusions and reinforce stereotypes. Data-driven analysis helps us avoid these pitfalls and make more accurate, informed judgments. My findings align with a CNN report titled "Hate crimes, shooting incidents in New York City have surged since last year", which notes that shooting incidents in NYC increased by 73% in May 2021 compared to May 2020.
+
+```{r}
+NYPD_boro_year <- nypd_shooting %>%
+  group_by(BORO, OCCUR_YEAR, Shootings) %>%
+  summarize(Shootings = sum(Shootings),
+            .groups = 'drop') %>%
+  select(BORO, OCCUR_YEAR, Shootings) %>%
+  ungroup()
+
+NYPD_boro_year %>%
+  ggplot(aes(x = OCCUR_YEAR, y = Shootings ,color = BORO)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "NYPD Shootings by Borough by Year",
+       subtitle = "(2006 - 2024)",
+       x = "Year",
+       y = "Number of Shootings",
+       caption = "(Figure - 6)")
+```
+
+
+
+## Additional Resources
+
+* [NYPD Shooting Incident Data (Historic) - CKAN](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic)
+* [NYC, Chicago see another wave of weekend gun violence](https://news.yahoo.com/nyc-chicago-see-another-wave-020519535.html)
+* [Hate crimes, shooting incidents in New York City have surged since last year, NYPD data show - CNN](https://edition.cnn.com/2021/06/04/us/new-york-city-hate-crimes/index.html)
+
+
